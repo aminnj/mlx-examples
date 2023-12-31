@@ -117,53 +117,24 @@ def build_parser():
     return parser
 
 
-class Tokenizer:
-    def __init__(self, model_path: str):
-        assert Path(model_path).exists(), model_path
-        self._model = SentencePieceProcessor(model_file=model_path)
-        self._sep = "▁"
-        assert self._model.vocab_size() == self._model.get_piece_size()
-
-    def encode(self, s: str, eos: bool = False) -> List[int]:
-        toks = [self._model.bos_id(), *self._model.encode(s)]
-        if eos:
-            toks.append(self.eos_id)
-        return toks
-
-    @property
-    def eos_id(self) -> int:
-        return self._model.eos_id()
-
-    def decode(self, t: List[int]) -> str:
-        out = self._model.decode(t)
-        if t and self._model.id_to_piece(t[0])[0] == self._sep:
-            return " " + out
-        return out
-
-    @property
-    def vocab_size(self) -> int:
-        return self._model.vocab_size()
-
 class TokenizerHF:
     def __init__(self, model_path: str):
         assert Path(model_path).exists(), model_path
         from transformers import AutoTokenizer
         self._model = AutoTokenizer.from_pretrained(model_path)
-        self._sep = "▁"
 
     def encode(self, s: str, eos: bool = False) -> List[int]:
-        toks = [self._model.bos_token_id, *self._model.encode(s)]
+        toks = self._model.encode(s)
         if eos:
-            toks.append(self.eos_id)
+            toks.append(self.eos_token_id)
         return toks
 
     @property
-    def eos_id(self) -> int:
+    def eos_token_id(self) -> int:
         return self._model.eos_token_id
 
     def decode(self, t: List[int]) -> str:
-        out = self._model.decode(t)
-        return out
+        return self._model.decode(t)
 
     @property
     def vocab_size(self) -> int:
@@ -342,7 +313,9 @@ def generate(model, prompt, tokenizer, args):
         yield y
 
         while True:
-            logits, cache = model(y[:, None], cache)
+            # Important! `cache=cache` must be kwarg and not positional
+            # (compare with `lora.py`)
+            logits, cache = model(y[:, None], cache=cache)
             y = sample(logits.squeeze(1))
             yield y
 
@@ -352,9 +325,19 @@ def generate(model, prompt, tokenizer, args):
 
         if (len(tokens) % 10) == 0:
             mx.eval(tokens)
+            eos_index = next(
+                (i for i, t in enumerate(tokens) if t.item() == tokenizer.eos_token_id),
+                None,
+            )
+
+            if eos_index is not None:
+                tokens = tokens[:eos_index]
+
             s = tokenizer.decode([t.item() for t in tokens])
             print(s, end="", flush=True)
             tokens = []
+            if eos_index is not None:
+                break
 
     mx.eval(tokens)
     s = tokenizer.decode([t.item() for t in tokens])
@@ -363,13 +346,9 @@ def generate(model, prompt, tokenizer, args):
 
 def load_model(folder: str, dtype=mx.float16):
     model_path = Path(folder)
-    if Path(str(model_path / "tokenizer.model")).exists():
-        tokenizer = Tokenizer(str(model_path / "tokenizer.model"))
-    else:
-        tokenizer = TokenizerHF(str(model_path))
+    tokenizer = TokenizerHF(str(model_path))
     with open(model_path / "params.json", "r") as f:
         config = json.loads(f.read())
-        print(config)
         model_args = ModelArgs(**config)
     weights = mx.load(str(model_path / "weights.npz"))
     weights = tree_unflatten(list(weights.items()))
@@ -378,12 +357,11 @@ def load_model(folder: str, dtype=mx.float16):
     model.update(weights)
     return model, tokenizer
 
-
 if __name__ == "__main__":
     parser = build_parser()
     args = parser.parse_args()
 
-    np.random.seed(args.seed)
+    mx.random.seed(args.seed)
 
     print("Loading pretrained model")
     model, tokenizer = load_model(args.model)
