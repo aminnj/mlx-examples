@@ -419,7 +419,8 @@ if __name__ == "__main__":
         mx.savez(args.adapter_file, **dict(tree_flatten(model.trainable_parameters())))
 
     # Load the LoRA adapter weights which we assume should exist by this point
-    model.load_weights(args.adapter_file)
+    if Path(args.adapter_file).exists():
+        model.load_weights(args.adapter_file)
 
     if args.test:
         print("Testing")
