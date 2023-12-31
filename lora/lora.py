@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import time
+import os
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -373,8 +374,9 @@ if __name__ == "__main__":
 
     # Resume training the given adapters.
     if args.resume_adapter_file is not None:
-        print(f"Loading pretrained adapters from {args.resume_adapter_file}")
-        model.load_weights(args.resume_adapter_file)
+        if os.path.exists(args.resume_adapter_file):
+            print(f"Loading pretrained adapters from {args.resume_adapter_file}")
+            model.load_weights(args.resume_adapter_file)
 
     if args.train:
         print("Training")

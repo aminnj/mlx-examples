@@ -109,6 +109,7 @@ class TransformerDecoder(nn.Module):
 
 class OutputHead(nn.Module):
     def __init__(self, config: ModelArgs) -> None:
+        super().__init__()
         self.ln = LayerNorm(config.model_dim)
         self.linear = nn.Linear(config.model_dim, config.num_vocab)
 
@@ -118,9 +119,11 @@ class OutputHead(nn.Module):
 
 class Phi2(nn.Module):
     def __init__(self, config: ModelArgs):
+        super().__init__()
         self.wte = nn.Embedding(config.num_vocab, config.model_dim)
         self.transformer = TransformerDecoder(config)
         self.lm_head = OutputHead(config)
+        self.layers = self.transformer.h
 
     def __call__(
         self,
