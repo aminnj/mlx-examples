@@ -322,7 +322,7 @@ def generate(model, prompt, tokenizer, args):
     for token, _ in zip(generate_step(), range(args.num_tokens)):
         tokens.append(token)
 
-        if (len(tokens) % 10) == 0:
+        if (len(tokens) % args.write_every) == 0:
             mx.eval(tokens)
             s = tokenizer.decode([t.item() for t in tokens])
             print(s, end="", flush=True)
