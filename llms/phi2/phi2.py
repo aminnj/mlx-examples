@@ -97,12 +97,13 @@ class TransformerDecoder(nn.Module):
     def __init__(self, config: ModelArgs):
         super().__init__()
         self.h = [ParallelBlock(config) for i in range(config.num_layers)]
+        self.ilayers = list(range(len(self.h)))
 
     def __call__(self, x, mask, cache):
         if cache is None:
-            cache = [None] * len(self.h)
-
-        for e, layer in enumerate(self.h):
+            cache = [None] * len(self.ilayers)
+        for e, ilayer in enumerate(self.ilayers):
+            layer = self.h[ilayer]
             x, cache[e] = layer(x, mask, cache[e])
         return x, cache
 
@@ -145,22 +146,36 @@ class Phi2(nn.Module):
 def generate(prompt: mx.array, model: Phi2, temp: Optional[float] = 0.0):
     def sample(logits):
         if temp == 0:
-            return mx.argmax(logits, axis=-1)
+            idx = mx.argmax(logits, axis=-1)
         else:
-            return mx.random.categorical(logits * (1 / temp))
+            idx = mx.random.categorical(logits * (1 / temp))
+        logprob = mx.log2(mx.squeeze(mx.softmax(logits, axis=-1)[:, idx]))
+        return idx, logprob
 
     logits, cache = model(prompt)
-    y = sample(logits[:, -1, :])
-    yield y
+    y, logprob = sample(logits[:, -1, :])
+    yield y, logprob
 
     while True:
         logits, cache = model(y[:, None], cache=cache)
-        y = sample(logits.squeeze(1))
-        yield y
+        y, logprob = sample(logits.squeeze(1))
+        yield y, logprob
 
 
 def load_model(model_path: str):
     model = Phi2(ModelArgs())
+    nlayers = len(model.transformer.h)
+
+    # # list that parameterizes what layers to run. By default it's just running layers 1..nlayers (0-indexed)
+    model.transformer.ilayers = list(range(nlayers))
+
+    # # add 2 extra copies of layer 16
+    model.transformer.ilayers = list(range(16)) + [16]*3 + list(range(17,nlayers))
+
+    # [0,0,1,1,...]
+    import numpy as np
+    model.transformer.ilayers = np.repeat(np.arange(nlayers),2)
+
     model_path = Path(model_path)
     with open(model_path / "config.json", "r") as f:
         config = json.loads(f.read())
@@ -221,8 +236,10 @@ if __name__ == "__main__":
     print(args.prompt, end="", flush=True)
 
     tokens = []
-    for token, _ in zip(generate(prompt, model, args.temp), range(args.max_tokens)):
+    logprobs = []
+    for (token, logprob), _ in zip(generate(prompt, model, args.temp), range(args.max_tokens)):
         tokens.append(token)
+        logprobs.append(logprob)
 
         if (len(tokens) % 10) == 0:
             mx.eval(tokens)
@@ -243,3 +260,6 @@ if __name__ == "__main__":
     mx.eval(tokens)
     s = tokenizer.decode([t.item() for t in tokens])
     print(s, flush=True)
+
+    perplexity = 2**(-sum(logprobs).tolist()/len(logprobs))
+    print(perplexity)
